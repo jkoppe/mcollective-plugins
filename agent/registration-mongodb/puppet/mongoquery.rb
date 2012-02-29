@@ -17,6 +17,7 @@ class Puppet::Util::MongoQuery
     query(query, {:fields => ["fqdn"]}).map{|result| result["fqdn"]}
   end
 
+  # Returns just facts.hostname matching the query
   # Finds all about nodes matching query
   def find_nodes(query)
     query(query).to_a
@@ -29,6 +30,41 @@ class Puppet::Util::MongoQuery
       @collection = collection
 
       connect
+    end
+  end
+
+
+  # jkoppe: copy of the query function which builds a custom command
+  # to query the puppet collection and return the distinct hostname facts
+  # from documents which match a query for env/classes
+  # realistically, we can probably have another wrapper for find_node_names
+  # which splices fqdn results into hostname results but someday we might
+  # need to get other facts this way? 
+  def find_hostnames(env,classes)
+    tries = 0
+
+    cmd = BSON::OrderedHash.new
+    cmd['distinct'] = @collection
+    cmd['key'] = "facts.hostname"
+    query = BSON::OrderedHash.new
+    query["facts.env"] = env
+    query["classes"] = classes
+    cmd['query'] = query
+    inspected = cmd.inspect
+    Puppet.notice("Running cmd: #{inspected}")
+
+    begin
+      connect unless connected?
+      @dbh.command(cmd).values[0]
+    rescue
+      retries += 1
+
+      if retries == 5
+        raise Puppet::ParseError, "Failed to query Mongo after 5 attempts"
+      end
+
+      connect
+      retry
     end
   end
 
